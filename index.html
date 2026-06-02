@@ -6,389 +6,572 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Coffee Timer" />
-  <meta name="theme-color" content="#0a0f1e" />
+  <meta name="theme-color" content="#080d1a" />
   <title>Coffee Timer</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: #0a0f1e;
-      color: #e8e0d0;
-      font-family: 'Georgia', 'Times New Roman', serif;
-      min-height: 100vh;
-      min-height: 100dvh;
-      overscroll-behavior: none;
+    *{box-sizing:border-box;margin:0;padding:0;}
+    html,body{height:100%;background:#080d1a;}
+    body{
+      font-family:-apple-system,'Hiragino Mincho ProN','Georgia',serif;
+      color:#e8e0d0;
+      overscroll-behavior:none;
+      -webkit-tap-highlight-color:transparent;
     }
-    #root { min-height: 100vh; min-height: 100dvh; }
+    #root{min-height:100vh;min-height:100dvh;}
+    @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.5;}}
+    @keyframes steam{
+      0%{transform:translateY(0) scaleX(1);opacity:0.6;}
+      50%{transform:translateY(-12px) scaleX(1.3);opacity:0.3;}
+      100%{transform:translateY(-24px) scaleX(0.8);opacity:0;}
+    }
+    @keyframes ripple{
+      0%{transform:scale(0.8);opacity:1;}
+      100%{transform:scale(2.4);opacity:0;}
+    }
+    @keyframes slideUp{
+      from{transform:translateY(20px);opacity:0;}
+      to{transform:translateY(0);opacity:1;}
+    }
+    .anim-slide{animation:slideUp 0.3s ease forwards;}
+    .btn-press:active{transform:scale(0.97);transition:transform 0.1s;}
   </style>
 </head>
 <body>
 <div id="root"></div>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-
 <script type="text/babel">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
-// ─── Shared ───────────────────────────────────────────────────────────────────
-function formatTime(s) {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, "0")}`;
+// ═══════════════════════════════════════════════════════════
+// DESIGN TOKENS
+// ═══════════════════════════════════════════════════════════
+const T = {
+  bg:       '#080d1a',
+  bgCard:   'rgba(255,255,255,0.04)',
+  bgCardHi: 'rgba(201,169,110,0.10)',
+  border:   'rgba(255,255,255,0.08)',
+  borderGold:'rgba(201,169,110,0.40)',
+  gold:     '#c9a96e',
+  goldHi:   '#e8c87a',
+  goldDim:  'rgba(201,169,110,0.25)',
+  blue:     '#3a9fc0',
+  blueDim:  'rgba(58,159,192,0.20)',
+  white:    '#f0e8d8',
+  dim:      '#8ca5b8',
+  dimmer:   '#4a6070',
+  danger:   '#e87a5a',
+};
+
+// ═══════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════
+const fmt = s => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+
+// ═══════════════════════════════════════════════════════════
+// RECIPE DATA
+// ═══════════════════════════════════════════════════════════
+const KASUYA_STEPS = [
+  {id:1, time:'0:00',seconds:0,  pour:30,cumulative:30, note:'蒸らし'},
+  {id:2, time:'0:30',seconds:30, pour:30,cumulative:60, note:'15秒間隔で注湯'},
+  {id:3, time:'0:45',seconds:45, pour:30,cumulative:90, note:''},
+  {id:4, time:'1:00',seconds:60, pour:30,cumulative:120,note:''},
+  {id:5, time:'1:15',seconds:75, pour:30,cumulative:150,note:''},
+  {id:6, time:'1:30',seconds:90, pour:30,cumulative:180,note:''},
+  {id:7, time:'1:45',seconds:105,pour:30,cumulative:210,note:''},
+  {id:8, time:'2:00',seconds:120,pour:30,cumulative:240,note:'お湯が抜けにくくなる'},
+  {id:9, time:'2:15',seconds:135,pour:30,cumulative:270,note:''},
+  {id:10,time:'2:30',seconds:150,pour:30,cumulative:300,note:'注ぎきる'},
+];
+const KASUYA_FINISH = 210;
+
+const BEAN_OPTIONS = [12,18,24,30,36,42,48];
+const FLAVOR_OPTIONS = [
+  {id:'bright', label:'酸味・明るい', labelEn:'BRIGHT',  sub:'1st少なめ'},
+  {id:'balance',label:'バランス',     labelEn:'BALANCE', sub:'均等'},
+  {id:'sweet',  label:'甘み・クリア', labelEn:'SWEET',   sub:'1st多め'},
+];
+const STRENGTH_OPTIONS = [
+  {id:'strong',label:'濃い', labelEn:'STRONG',sub:'2投'},
+  {id:'medium',label:'普通', labelEn:'MEDIUM',sub:'3投'},
+  {id:'light', label:'薄い', labelEn:'LIGHT', sub:'4投'},
+];
+
+function calcRecipe(beans,flavor,strength){
+  const total=beans*15, f40=Math.round(total*0.4), s60=Math.round(total*0.6);
+  const r = flavor==='sweet'?0.6:flavor==='bright'?0.4:0.5;
+  const p1=Math.round(f40*r), p2=f40-p1;
+  const n = strength==='strong'?2:strength==='light'?4:3;
+  const pp = Math.round(s60/n);
+  const steps=[
+    {id:1,time:'0:00',seconds:0, pour:p1,cumulative:p1,      note:'蒸らし（甘み・酸味調整 前半）'},
+    {id:2,time:'0:45',seconds:45,pour:p2,cumulative:p1+p2,   note:'甘み・酸味調整 後半'},
+  ];
+  let cum=p1+p2;
+  for(let i=0;i<n;i++){
+    const sec=90+i*45;
+    const ap = i===n-1 ? total-cum : pp;
+    cum+=ap;
+    steps.push({
+      id:3+i,
+      time:`${Math.floor(sec/60)}:${(sec%60).toString().padStart(2,'0')}`,
+      seconds:sec,pour:ap,cumulative:cum,
+      note:i===0?'濃度調整 開始':'',
+    });
+  }
+  return {total,steps,finish:steps[steps.length-1].seconds+90};
 }
 
-const BIG = { fontSize: "clamp(48px, 13vw, 72px)", fontWeight: 200, lineHeight: 1, fontVariantNumeric: "tabular-nums" };
-const MED = { fontSize: "clamp(20px, 5vw, 28px)" };
+// ═══════════════════════════════════════════════════════════
+// SHARED COMPONENTS
+// ═══════════════════════════════════════════════════════════
 
-// ─── 10投式 ───────────────────────────────────────────────────────────────────
-const KASUYA_STEPS = [
-  { id:1,  time:"0:00", seconds:0,   cumulative:30,  pour:30, note:"30g注いで蒸らす" },
-  { id:2,  time:"0:30", seconds:30,  cumulative:60,  pour:30, note:"ここから15秒間隔で30gずつ注湯" },
-  { id:3,  time:"0:45", seconds:45,  cumulative:90,  pour:30, note:"" },
-  { id:4,  time:"1:00", seconds:60,  cumulative:120, pour:30, note:"" },
-  { id:5,  time:"1:15", seconds:75,  cumulative:150, pour:30, note:"" },
-  { id:6,  time:"1:30", seconds:90,  cumulative:180, pour:30, note:"" },
-  { id:7,  time:"1:45", seconds:105, cumulative:210, pour:30, note:"" },
-  { id:8,  time:"2:00", seconds:120, cumulative:240, pour:30, note:"この辺りからお湯の抜けが遅くなる" },
-  { id:9,  time:"2:15", seconds:135, cumulative:270, pour:30, note:"" },
-  { id:10, time:"2:30", seconds:150, cumulative:300, pour:30, note:"300gまで注ぎきる" },
-];
-const KASUYA_TOTAL = 210;
+// Large timer display
+function TimerDisplay({elapsed, color}){
+  return (
+    <div style={{textAlign:'center',lineHeight:1}}>
+      <div style={{
+        fontSize:'clamp(80px,22vw,120px)',fontWeight:100,
+        color:color||T.white,letterSpacing:'-0.02em',
+        fontVariantNumeric:'tabular-nums',
+        textShadow: color===T.gold ? `0 0 40px ${T.goldDim}` : 'none',
+      }}>{fmt(elapsed)}</div>
+    </div>
+  );
+}
 
-function KasuyaTimer() {
-  const [elapsed, setElapsed] = useState(0);
-  const [running, setRunning] = useState(false);
-  const [done, setDone] = useState(false);
-  const ref = useRef(null);
+// Next pour panel
+function NextPourPanel({timeToNext, nextStep, urgent}){
+  return (
+    <div style={{
+      background: urgent ? 'rgba(201,169,110,0.12)' : T.bgCard,
+      border:`1px solid ${urgent ? T.borderGold : T.border}`,
+      borderRadius:16,padding:'16px 20px',textAlign:'center',
+      transition:'all 0.3s',
+    }}>
+      <div style={{fontSize:10,color:T.dimmer,letterSpacing:'0.2em',marginBottom:6,textTransform:'uppercase'}}>
+        次の注湯まで
+      </div>
+      <div style={{
+        fontSize:'clamp(52px,14vw,80px)',fontWeight:100,
+        color: urgent ? T.goldHi : T.white,
+        lineHeight:1,fontVariantNumeric:'tabular-nums',
+      }}>
+        {timeToNext}<span style={{fontSize:'clamp(22px,5vw,32px)',color:T.dim,marginLeft:4}}>秒</span>
+      </div>
+      <div style={{fontSize:12,color: urgent ? T.gold : T.dimmer,marginTop:6}}>
+        {nextStep.time} &nbsp;·&nbsp; +{nextStep.pour}g &nbsp;·&nbsp; 累計 {nextStep.cumulative}g
+      </div>
+    </div>
+  );
+}
 
-  useEffect(() => {
-    if (running) {
-      ref.current = setInterval(() => {
-        setElapsed(p => {
-          if (p >= KASUYA_TOTAL) { clearInterval(ref.current); setRunning(false); setDone(true); return KASUYA_TOTAL; }
-          return p + 1;
-        });
-      }, 1000);
-    } else clearInterval(ref.current);
-    return () => clearInterval(ref.current);
-  }, [running]);
+// Pour progress
+function PourProgress({poured, total}){
+  const pct = Math.round((poured/total)*100);
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:8}}>
+        <div style={{fontSize:10,color:T.dimmer,letterSpacing:'0.2em',textTransform:'uppercase'}}>注湯量（累計）</div>
+        <div style={{fontSize:11,color:T.dimmer}}>{pct}%</div>
+      </div>
+      <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:10}}>
+        <span style={{fontSize:'clamp(44px,12vw,64px)',fontWeight:100,color:T.gold,lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{poured}</span>
+        <span style={{fontSize:'clamp(18px,4vw,24px)',color:T.dim}}>/ {total}g</span>
+      </div>
+      <div style={{height:6,background:'rgba(255,255,255,0.06)',borderRadius:3,overflow:'hidden'}}>
+        <div style={{
+          height:'100%',width:`${(poured/total)*100}%`,
+          background:`linear-gradient(90deg,${T.blue},#5ab8d8)`,
+          borderRadius:3,transition:'width 0.4s ease',
+        }}/>
+      </div>
+    </div>
+  );
+}
 
-  const curIdx = KASUYA_STEPS.reduce((a, s, i) => elapsed >= s.seconds ? i : a, -1);
-  const nextStep = KASUYA_STEPS[curIdx + 1];
-  const timeToNext = nextStep ? nextStep.seconds - elapsed : null;
-  const poured = curIdx >= 0 ? KASUYA_STEPS[curIdx].cumulative : 0;
-  const reset = () => { clearInterval(ref.current); setElapsed(0); setRunning(false); setDone(false); };
+// Step tracker row
+function StepRow({step, status, phase}){
+  // status: 'done' | 'active' | 'next' | 'pending'
+  const icon = status==='done'?'✓':status==='active'?'▶':status==='next'?'◦':'○';
+  const rowBg = status==='active' ? 'rgba(201,169,110,0.10)' : status==='next' ? 'rgba(255,255,255,0.03)' : 'transparent';
+  const rowBorder = status==='active' ? `1px solid ${T.borderGold}` : `1px solid transparent`;
+  const textColor = status==='done'?T.dimmer:status==='active'?T.gold:status==='next'?T.dim:T.dimmer;
+  const iconColor = status==='done'?T.gold:status==='active'?T.gold:status==='next'?T.dim:T.dimmer;
+  const phaseColor = phase==='FLAVOR' ? T.gold : T.blue;
 
   return (
-    <div style={{ padding: "env(safe-area-inset-top, 24px) 16px 32px", maxWidth: 560, margin: "0 auto" }}>
-      {/* Header */}
-      <div style={{ textAlign:"center", marginBottom:20 }}>
-        <div style={{ fontSize:10, letterSpacing:"0.3em", color:"#c9a96e", textTransform:"uppercase", marginBottom:4 }}>
-          Barista Tetsu Kasuya — 世界チャンピオン10周年
-        </div>
-        <h1 style={{ fontSize:"clamp(22px,6vw,36px)", fontWeight:300, color:"#f0e8d8", letterSpacing:"0.05em" }}>
-          10投式の新レシピ
-        </h1>
-        <p style={{ fontSize:11, color:"#8ca5b8", marginTop:4 }}>豆20g · 湯300g · 95〜96℃ · C40 40〜45クリック · V60 Neo</p>
-      </div>
+    <div style={{
+      display:'flex',alignItems:'center',gap:10,
+      padding:'9px 12px',borderRadius:10,
+      background:rowBg,border:rowBorder,
+      opacity:status==='done'?0.45:1,transition:'all 0.3s',
+    }}>
+      <div style={{
+        width:26,height:26,borderRadius:'50%',flexShrink:0,
+        display:'flex',alignItems:'center',justifyContent:'center',
+        fontSize:status==='done'?11:12,fontWeight:700,
+        background: status==='active'?T.gold:status==='done'?'rgba(201,169,110,0.18)':'rgba(255,255,255,0.06)',
+        color: status==='active'?'#080d1a':iconColor,
+      }}>{icon}</div>
 
-      {/* Clock */}
-      <div style={{ textAlign:"center", marginBottom:8 }}>
-        <div style={{ ...BIG, color: done ? "#c9a96e" : "#f0e8d8" }}>{formatTime(elapsed)}</div>
-        <div style={{ fontSize:11, color:"#4a6070", marginTop:4 }}>目安 3:30 完成</div>
+      <div style={{
+        fontSize:8,padding:'2px 6px',borderRadius:3,flexShrink:0,
+        background: phase==='FLAVOR'?'rgba(201,169,110,0.10)':'rgba(58,159,192,0.10)',
+        color:phaseColor,letterSpacing:'0.05em',
+      }}>{phase}</div>
+
+      <div style={{width:36,fontSize:12,color:textColor,fontVariantNumeric:'tabular-nums',flexShrink:0}}>{step.time}</div>
+      <div style={{width:32,fontSize:13,color:status==='active'?T.goldHi:T.dimmer,fontWeight:status==='active'?600:400,flexShrink:0}}>+{step.pour}g</div>
+      <div style={{width:44,fontSize:12,color:status==='active'?T.white:T.dimmer,flexShrink:0,textAlign:'right'}}>{step.cumulative}g</div>
+      {step.note&&status==='active'&&(
+        <div style={{fontSize:10,color:T.gold,lineHeight:1.4,flex:1}}>{step.note}</div>
+      )}
+    </div>
+  );
+}
+
+// Big action button
+function BigButton({label, onClick, variant, disabled}){
+  const bg = variant==='pause'
+    ? 'rgba(255,255,255,0.07)'
+    : `linear-gradient(135deg,${T.gold},#a07840)`;
+  const border = variant==='pause' ? `1px solid rgba(255,255,255,0.15)` : 'none';
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="btn-press"
+      style={{
+        width:'100%',height:72,borderRadius:16,
+        border,background:disabled?'rgba(255,255,255,0.04)':bg,
+        color:disabled?T.dimmer:T.white,
+        fontSize:18,letterSpacing:'0.15em',
+        cursor:disabled?'not-allowed':'pointer',
+        fontFamily:'inherit',fontWeight:300,
+        opacity:disabled?0.4:1,
+        boxShadow: (!disabled&&variant!=='pause') ? `0 4px 20px rgba(201,169,110,0.25)` : 'none',
+        transition:'all 0.2s',
+      }}
+    >{label}</button>
+  );
+}
+
+// Time progress bar (thin gold)
+function TimeBar({elapsed, total}){
+  return (
+    <div style={{height:2,background:'rgba(255,255,255,0.07)',borderRadius:1,overflow:'hidden'}}>
+      <div style={{
+        height:'100%',width:`${Math.min(elapsed/total,1)*100}%`,
+        background:`linear-gradient(90deg,${T.gold},${T.goldHi})`,
+        transition:'width 0.5s linear',
+      }}/>
+    </div>
+  );
+}
+
+// Completion banner
+function DoneBanner({message}){
+  return (
+    <div className="anim-slide" style={{
+      background:'rgba(201,169,110,0.10)',
+      border:`1px solid ${T.borderGold}`,
+      borderRadius:14,padding:'14px 20px',textAlign:'center',
+    }}>
+      <div style={{fontSize:28,marginBottom:6}}>☕</div>
+      <div style={{fontSize:14,color:T.gold,letterSpacing:'0.08em'}}>{message}</div>
+    </div>
+  );
+}
+
+// Collapsible step list
+function StepList({steps, curIdx, phaseMap}){
+  const [open,setOpen]=useState(false);
+  return (
+    <div style={{marginTop:8}}>
+      <button onClick={()=>setOpen(o=>!o)} style={{
+        width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',
+        background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:10,
+        padding:'10px 14px',cursor:'pointer',fontFamily:'inherit',
+      }}>
+        <span style={{fontSize:11,color:T.dimmer,letterSpacing:'0.15em'}}>ステップ一覧</span>
+        <span style={{fontSize:14,color:T.dimmer,transform:open?'rotate(180deg)':'none',transition:'transform 0.2s'}}>▾</span>
+      </button>
+      {open&&(
+        <div className="anim-slide" style={{marginTop:6,display:'flex',flexDirection:'column',gap:3}}>
+          {steps.map((step,i)=>{
+            const status = i<curIdx?'done':i===curIdx?'active':i===curIdx+1?'next':'pending';
+            return <StepRow key={step.id} step={step} status={status} phase={phaseMap(i)}/>;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// KASUYA SCREEN  (Recipe view + Brew mode)
+// ═══════════════════════════════════════════════════════════
+function KasuyaScreen(){
+  const [brewMode,setBrewMode]=useState(false);
+  const [elapsed,setElapsed]=useState(0);
+  const [running,setRunning]=useState(false);
+  const [done,setDone]=useState(false);
+  const ref=useRef(null);
+
+  useEffect(()=>{
+    if(running){
+      ref.current=setInterval(()=>{
+        setElapsed(p=>{
+          if(p>=KASUYA_FINISH){clearInterval(ref.current);setRunning(false);setDone(true);return KASUYA_FINISH;}
+          return p+1;
+        });
+      },1000);
+    } else clearInterval(ref.current);
+    return ()=>clearInterval(ref.current);
+  },[running]);
+
+  const curIdx=KASUYA_STEPS.reduce((a,s,i)=>elapsed>=s.seconds?i:a,-1);
+  const nextStep=KASUYA_STEPS[curIdx+1];
+  const timeToNext=nextStep?nextStep.seconds-elapsed:null;
+  const poured=curIdx>=0?KASUYA_STEPS[curIdx].cumulative:0;
+  const reset=()=>{clearInterval(ref.current);setElapsed(0);setRunning(false);setDone(false);};
+  const startBrew=()=>{setBrewMode(true);};
+  const endBrew=()=>{reset();setBrewMode(false);};
+
+  const phaseMap=i=>i<2?'FLAVOR':'STRENGTH';
+
+  // ── Recipe view ──
+  if(!brewMode){
+    return (
+      <div style={{maxWidth:520,margin:'0 auto'}}>
+        {/* Hero */}
+        <div style={{
+          background:'linear-gradient(160deg,rgba(201,169,110,0.08),rgba(10,20,40,0))',
+          border:`1px solid ${T.goldDim}`,borderRadius:20,
+          padding:'24px 20px',marginBottom:20,textAlign:'center',
+        }}>
+          <div style={{fontSize:10,color:T.gold,letterSpacing:'0.3em',textTransform:'uppercase',marginBottom:6}}>
+            Barista Tetsu Kasuya — World Champion
+          </div>
+          <h2 style={{fontSize:'clamp(24px,7vw,40px)',fontWeight:200,color:T.white,letterSpacing:'0.03em',marginBottom:4}}>
+            10投式の新レシピ
+          </h2>
+          <p style={{fontSize:12,color:T.dim,lineHeight:1.7}}>
+            浅煎りの透明感とポテンシャルを最大限に引き出す
+          </p>
+        </div>
+
+        {/* Spec grid */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:20}}>
+          {[
+            ['豆の量','20g'],['湯量','300g (1:15)'],
+            ['湯温','95〜96℃'],['挽き目','C40 / 40〜45クリック'],
+            ['ドリッパー','HARIO V60 NEO'],['抽出時間','約3:30'],
+          ].map(([l,v])=>(
+            <div key={l} style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:12,padding:'12px 14px'}}>
+              <div style={{fontSize:10,color:T.dimmer,letterSpacing:'0.1em',marginBottom:3}}>{l}</div>
+              <div style={{fontSize:14,color:T.gold,fontWeight:500}}>{v}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Theory */}
+        <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:14,padding:'14px 16px',marginBottom:20}}>
+          <div style={{fontSize:10,color:T.dimmer,letterSpacing:'0.2em',textTransform:'uppercase',marginBottom:10}}>抽出理論</div>
+          <p style={{fontSize:12,color:T.dim,lineHeight:1.8}}>
+            トータル300gのお湯を1回30gずつ・10回に分けて注ぎます。
+            お湯をドリッパー内に溜めずに、スッと落とし切るイメージで。
+            V60 Neoは少量ずつ均一にリブへ向かって抽出されるため、
+            このレシピとの相性が特に抜群です。
+          </p>
+        </div>
+
+        {/* Step preview */}
+        <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:14,padding:'14px 16px',marginBottom:24}}>
+          <div style={{fontSize:10,color:T.dimmer,letterSpacing:'0.2em',textTransform:'uppercase',marginBottom:10}}>ステップ一覧</div>
+          <div style={{display:'flex',flexDirection:'column',gap:3}}>
+            {KASUYA_STEPS.map((step,i)=>(
+              <StepRow key={step.id} step={step} status='pending' phase={phaseMap(i)}/>
+            ))}
+          </div>
+        </div>
+
+        {/* Start brew button */}
+        <BigButton label="▶  抽出を開始する" onClick={startBrew}/>
+        <div style={{textAlign:'center',marginTop:10,fontSize:11,color:T.dimmer}}>
+          約3:30 &nbsp;·&nbsp; 10ステップ
+        </div>
+      </div>
+    );
+  }
+
+  // ── Brew mode ──
+  const urgent = timeToNext!==null && timeToNext<=5;
+  const stepLabel = curIdx>=0 ? `STEP ${curIdx+1} / 10` : 'READY';
+
+  return (
+    <div style={{maxWidth:520,margin:'0 auto'}}>
+      {/* Step indicator */}
+      <div style={{
+        display:'flex',justifyContent:'space-between',alignItems:'center',
+        marginBottom:12,
+      }}>
+        <div style={{fontSize:11,color:T.dimmer,letterSpacing:'0.2em'}}>{stepLabel}</div>
+        <button onClick={endBrew} style={{
+          background:'none',border:`1px solid ${T.border}`,borderRadius:8,
+          padding:'4px 12px',color:T.dimmer,fontSize:11,cursor:'pointer',fontFamily:'inherit',
+        }}>レシピへ戻る</button>
       </div>
 
       {/* Time bar */}
-      <div style={{ height:3, background:"rgba(255,255,255,0.08)", borderRadius:2, overflow:"hidden", marginBottom:16 }}>
-        <div style={{ height:"100%", width:`${Math.min(elapsed/KASUYA_TOTAL,1)*100}%`, background:"linear-gradient(90deg,#c9a96e,#e8c87a)", transition:"width 0.5s linear" }} />
+      <TimeBar elapsed={elapsed} total={KASUYA_FINISH}/>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:T.dimmer,marginTop:3,marginBottom:16}}>
+        <span>0:00</span><span>3:30</span>
       </div>
 
-      {/* Pour weight */}
-      <div style={{ textAlign:"center", marginBottom:8 }}>
-        <div style={{ fontSize:11, color:"#8ca5b8", letterSpacing:"0.15em", marginBottom:4 }}>注湯量（累計）</div>
-        <span style={{ ...BIG, color:"#c9a96e" }}>{poured}</span>
-        <span style={{ ...MED, color:"#8ca5b8", marginLeft:6 }}>/ 300g</span>
+      {/* Timer — largest */}
+      <div style={{textAlign:'center',marginBottom:4}}>
+        <TimerDisplay elapsed={elapsed} color={done?T.gold:T.white}/>
+        <div style={{fontSize:11,color:T.dimmer,marginTop:4,letterSpacing:'0.1em'}}>目安 3:30 完成</div>
       </div>
 
-      {/* Water bar */}
-      <div style={{ height:8, background:"rgba(255,255,255,0.06)", borderRadius:4, overflow:"hidden", marginBottom:16 }}>
-        <div style={{ height:"100%", width:`${(poured/300)*100}%`, background:"linear-gradient(90deg,#1a6080,#3a9fc0)", borderRadius:4, transition:"width 0.4s ease" }} />
-      </div>
+      <div style={{height:1,background:T.border,margin:'16px 0'}}/>
 
-      {/* Next pour */}
-      {timeToNext !== null && running && (
-        <div style={{
-          background: timeToNext <= 5 ? "rgba(201,169,110,0.15)" : "rgba(255,255,255,0.04)",
-          border: `1px solid ${timeToNext <= 5 ? "rgba(201,169,110,0.5)" : "rgba(255,255,255,0.08)"}`,
-          borderRadius:12, padding:"14px 20px", textAlign:"center", marginBottom:14, transition:"all 0.3s",
-        }}>
-          <div style={{ fontSize:11, color:"#4a6070", letterSpacing:"0.15em", marginBottom:4 }}>次の注湯まで</div>
-          <div style={{ ...BIG, color: timeToNext <= 5 ? "#e8c87a" : "#f0e8d8" }}>
-            {timeToNext}<span style={{ ...MED, color:"#8ca5b8", marginLeft:4 }}>秒</span>
-          </div>
-          <div style={{ fontSize:11, color: timeToNext <= 5 ? "#c9a96e" : "#4a6070", marginTop:4 }}>
-            {nextStep.time} / 累計 {nextStep.cumulative}g
-          </div>
+      {/* Next pour — second largest */}
+      {timeToNext!==null && running && !done && (
+        <div style={{marginBottom:14}}>
+          <NextPourPanel timeToNext={timeToNext} nextStep={nextStep} urgent={urgent}/>
         </div>
       )}
 
-      {done && (
-        <div style={{ background:"rgba(201,169,110,0.12)", border:"1px solid rgba(201,169,110,0.4)", borderRadius:8, padding:"10px 20px", textAlign:"center", color:"#c9a96e", fontSize:13, marginBottom:14 }}>
-          ☕ 完成！浅煎りのクリアさ・甘さ・香りをお楽しみください
-        </div>
-      )}
+      {/* Pour progress — third */}
+      <div style={{marginBottom:16}}>
+        <PourProgress poured={poured} total={300}/>
+      </div>
+
+      {/* Done */}
+      {done&&<div style={{marginBottom:16}}><DoneBanner message="完成！浅煎りのクリアさ・甘さ・香りをお楽しみください"/></div>}
 
       {/* Buttons */}
-      <div style={{ display:"flex", gap:12, justifyContent:"center", marginBottom:24 }}>
-        <button onClick={() => setRunning(r => !r)} disabled={done} style={{
-          padding:"12px 32px", borderRadius:8, border: running ? "1px solid rgba(255,255,255,0.15)" : "none",
-          background: running ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg,#c9a96e,#a07840)",
-          color:"#f0e8d8", fontSize:15, letterSpacing:"0.1em", cursor: done ? "not-allowed" : "pointer",
-          opacity: done ? 0.4 : 1, fontFamily:"inherit",
-        }}>
-          {running ? "⏸ 一時停止" : "▶ スタート"}
-        </button>
+      <div style={{display:'flex',gap:10,marginBottom:16}}>
+        <div style={{flex:1}}>
+          <BigButton
+            label={running?'⏸  一時停止':'▶  スタート'}
+            onClick={()=>setRunning(r=>!r)}
+            variant={running?'pause':'start'}
+            disabled={done}
+          />
+        </div>
         <button onClick={reset} style={{
-          padding:"12px 20px", borderRadius:8, border:"1px solid rgba(255,255,255,0.1)",
-          background:"rgba(255,255,255,0.04)", color:"#8ca5b8", fontSize:14, cursor:"pointer", fontFamily:"inherit",
+          width:72,height:72,borderRadius:16,
+          background:T.bgCard,border:`1px solid ${T.border}`,
+          color:T.dim,fontSize:12,cursor:'pointer',fontFamily:'inherit',
         }}>リセット</button>
       </div>
 
-      {/* Step list */}
-      <div style={{ fontSize:10, color:"#4a6070", letterSpacing:"0.2em", textAlign:"center", marginBottom:10 }}>注湯ステップ</div>
-      <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-        {KASUYA_STEPS.map((step, i) => {
-          const isActive = i === curIdx, isPast = i < curIdx, isNext = i === curIdx + 1;
-          return (
-            <div key={step.id} style={{
-              display:"flex", alignItems:"center", gap:10, padding:"9px 12px", borderRadius:8,
-              background: isActive ? "rgba(201,169,110,0.12)" : isNext ? "rgba(255,255,255,0.04)" : "transparent",
-              border: isActive ? "1px solid rgba(201,169,110,0.35)" : isNext ? "1px solid rgba(255,255,255,0.07)" : "1px solid transparent",
-              opacity: isPast ? 0.4 : 1, transition:"all 0.3s",
-            }}>
-              <div style={{
-                width:22, height:22, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center",
-                fontSize:10, fontWeight:700,
-                background: isActive ? "#c9a96e" : isPast ? "rgba(201,169,110,0.2)" : "rgba(255,255,255,0.06)",
-                color: isActive ? "#0a0f1e" : isPast ? "#c9a96e" : "#4a6070",
-              }}>{isPast ? "✓" : step.id}</div>
-              <div style={{ width:36, fontSize:12, color: isActive ? "#c9a96e" : "#8ca5b8", fontVariantNumeric:"tabular-nums", flexShrink:0 }}>{step.time}</div>
-              <div style={{ width:30, fontSize:12, color: isActive ? "#e8c87a" : "#6080a0", textAlign:"right", flexShrink:0 }}>+{step.pour}g</div>
-              <div style={{ width:42, fontSize:12, color: isActive ? "#f0e8d8" : "#4a6070", textAlign:"right", flexShrink:0 }}>{step.cumulative}g</div>
-              {step.note && <div style={{ fontSize:10, color: isActive ? "#c9a96e" : "#4a6070", lineHeight:1.4, flex:1 }}>{step.note}</div>}
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ marginTop:16, padding:"10px 14px", background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:8, fontSize:10, color:"#4a6070", textAlign:"center", lineHeight:1.7 }}>
-        お湯をドリッパー内に溜めずに、スッと落とし切るイメージで注湯。<br/>約3:30前後で全量が落ちきったら完成。
-      </div>
+      {/* Collapsible steps */}
+      <StepList steps={KASUYA_STEPS} curIdx={curIdx} phaseMap={phaseMap}/>
     </div>
   );
 }
 
-// ─── 4/6メソッド ──────────────────────────────────────────────────────────────
-function calcRecipe(beans, flavor, strength) {
-  const total = beans * 15;
-  const first40 = Math.round(total * 0.4);
-  const last60 = Math.round(total * 0.6);
-  let pour1, pour2;
-  if (flavor === "sweet")       { pour1 = Math.round(first40 * 0.6); pour2 = first40 - pour1; }
-  else if (flavor === "bright") { pour1 = Math.round(first40 * 0.4); pour2 = first40 - pour1; }
-  else                          { pour1 = Math.round(first40 * 0.5); pour2 = first40 - pour1; }
-  const numPours = strength === "strong" ? 2 : strength === "light" ? 4 : 3;
-  const perPour = Math.round(last60 / numPours);
-  const steps = [
-    { id:1, time:"0:00", seconds:0,  pour:pour1, cumulative:pour1,        note:"蒸らし（フレーバーコントロール前半）" },
-    { id:2, time:"0:45", seconds:45, pour:pour2, cumulative:pour1+pour2,  note:"フレーバーコントロール後半" },
-  ];
-  let cum = pour1 + pour2;
-  for (let i = 0; i < numPours; i++) {
-    const sec = 90 + i * 45;
-    const actualPour = i === numPours - 1 ? total - cum : perPour;
-    cum += actualPour;
-    steps.push({ id:3+i, time:`${Math.floor(sec/60)}:${(sec%60).toString().padStart(2,"0")}`, seconds:sec, pour:actualPour, cumulative:cum, note: i===0 ? "ストレングスコントロール開始" : "" });
+// ═══════════════════════════════════════════════════════════
+// 4/6 SCREEN
+// ═══════════════════════════════════════════════════════════
+function FourSixScreen(){
+  const [screen,setScreen]=useState('ref'); // ref | brew
+  const [sel,setSel]=useState(null);
+
+  if(screen==='brew'&&sel){
+    return <FourSixBrew {...sel} onBack={()=>setScreen('ref')}/>;
   }
-  return { total, steps };
+  return <FourSixRef onSelect={(b,f,s,r)=>{setSel({beans:b,flavor:f,strength:s,recipe:r});setScreen('brew');}}/>;
 }
 
-const BEAN_OPTIONS = [12,13,14,15,16,17,18,19,20,21,22,23,24,25];
-const FLAVOR_OPTIONS = [
-  { id:"bright",  label:"酸味・明るい", sub:"1st少なめ" },
-  { id:"balance", label:"バランス",     sub:"均等" },
-  { id:"sweet",   label:"甘み・クリア", sub:"1st多め" },
-];
-const STRENGTH_OPTIONS = [
-  { id:"strong", label:"濃い", sub:"2投" },
-  { id:"medium", label:"普通", sub:"3投" },
-  { id:"light",  label:"薄い", sub:"4投" },
-];
-
-function FourSixTimer({ recipe, beans, flavor, strength, onBack }) {
-  const { steps, total } = recipe;
-  const FINISH = steps[steps.length - 1].seconds + 90;
-  const [elapsed, setElapsed] = useState(0);
-  const [running, setRunning] = useState(false);
-  const [done, setDone] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (running) {
-      ref.current = setInterval(() => {
-        setElapsed(p => {
-          if (p >= FINISH) { clearInterval(ref.current); setRunning(false); setDone(true); return FINISH; }
-          return p + 1;
-        });
-      }, 1000);
-    } else clearInterval(ref.current);
-    return () => clearInterval(ref.current);
-  }, [running, FINISH]);
-
-  const curIdx = steps.reduce((a, s, i) => elapsed >= s.seconds ? i : a, -1);
-  const nextStep = steps[curIdx + 1];
-  const timeToNext = nextStep ? nextStep.seconds - elapsed : null;
-  const poured = curIdx >= 0 ? steps[curIdx].cumulative : 0;
-  const flavorLabel = FLAVOR_OPTIONS.find(f => f.id === flavor)?.label;
-  const strengthLabel = STRENGTH_OPTIONS.find(s => s.id === strength)?.label;
-  const reset = () => { clearInterval(ref.current); setElapsed(0); setRunning(false); setDone(false); };
+function FourSixRef({onSelect}){
+  const [flavor,setFlavor]=useState('balance');
+  const [strength,setStrength]=useState('medium');
+  const [hi,setHi]=useState(null);
 
   return (
-    <div style={{ maxWidth:560, margin:"0 auto" }}>
-      <button onClick={onBack} style={{ background:"none", border:"none", color:"#7a9ab5", fontSize:13, cursor:"pointer", marginBottom:16, letterSpacing:"0.1em", fontFamily:"inherit", display:"flex", alignItems:"center", gap:6 }}>
-        ← 早見表に戻る
-      </button>
-
-      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:20 }}>
-        {[`豆 ${beans}g`, `湯量 ${total}g`, flavorLabel, strengthLabel, `${steps.length}投式`].map(t => (
-          <span key={t} style={{ background:"rgba(180,140,80,0.12)", border:"1px solid rgba(180,140,80,0.25)", borderRadius:20, padding:"3px 10px", fontSize:10, color:"#c9a96e" }}>{t}</span>
-        ))}
+    <div style={{maxWidth:600,margin:'0 auto'}}>
+      {/* Header */}
+      <div style={{textAlign:'center',marginBottom:20}}>
+        <div style={{fontSize:10,color:T.gold,letterSpacing:'0.3em',textTransform:'uppercase',marginBottom:4}}>Tetsu Kasuya — V60 Neo</div>
+        <h2 style={{fontSize:'clamp(22px,6vw,36px)',fontWeight:200,color:T.white,letterSpacing:'0.03em'}}>4/6メソッド</h2>
+        <p style={{fontSize:11,color:T.dim,marginTop:4}}>Ratio 1:15 · 95〜96℃</p>
       </div>
 
-      {/* Clock */}
-      <div style={{ textAlign:"center", marginBottom:8 }}>
-        <div style={{ ...BIG, color: done ? "#c9a96e" : "#f0e8d8" }}>{formatTime(elapsed)}</div>
-        <div style={{ fontSize:11, color:"#4a6070", marginTop:4 }}>目安 {formatTime(FINISH)} 完成</div>
-      </div>
-
-      <div style={{ height:3, background:"rgba(255,255,255,0.07)", borderRadius:2, overflow:"hidden", marginBottom:14 }}>
-        <div style={{ height:"100%", width:`${Math.min(elapsed/FINISH,1)*100}%`, background:"linear-gradient(90deg,#c9a96e,#e8c87a)", transition:"width 0.5s linear" }} />
-      </div>
-
-      <div style={{ textAlign:"center", marginBottom:8 }}>
-        <div style={{ fontSize:11, color:"#8ca5b8", letterSpacing:"0.15em", marginBottom:4 }}>注湯量（累計）</div>
-        <span style={{ ...BIG, color:"#c9a96e" }}>{poured}</span>
-        <span style={{ ...MED, color:"#8ca5b8", marginLeft:6 }}>/ {total}g</span>
-      </div>
-
-      <div style={{ height:8, background:"rgba(255,255,255,0.06)", borderRadius:4, overflow:"hidden", marginBottom:16 }}>
-        <div style={{ height:"100%", width:`${(poured/total)*100}%`, background:"linear-gradient(90deg,#1a6080,#3a9fc0)", borderRadius:4, transition:"width 0.4s ease" }} />
-      </div>
-
-      {timeToNext !== null && running && (
-        <div style={{
-          background: timeToNext <= 5 ? "rgba(201,169,110,0.15)" : "rgba(255,255,255,0.04)",
-          border: `1px solid ${timeToNext <= 5 ? "rgba(201,169,110,0.5)" : "rgba(255,255,255,0.08)"}`,
-          borderRadius:12, padding:"14px 20px", textAlign:"center", marginBottom:14, transition:"all 0.3s",
-        }}>
-          <div style={{ fontSize:11, color:"#4a6070", letterSpacing:"0.15em", marginBottom:4 }}>次の注湯まで</div>
-          <div style={{ ...BIG, color: timeToNext <= 5 ? "#e8c87a" : "#f0e8d8" }}>
-            {timeToNext}<span style={{ ...MED, color:"#8ca5b8", marginLeft:4 }}>秒</span>
-          </div>
-          <div style={{ fontSize:11, color: timeToNext <= 5 ? "#c9a96e" : "#4a6070", marginTop:4 }}>
-            {nextStep.time} / 累計 {nextStep.cumulative}g (+{nextStep.pour}g)
-          </div>
+      {/* Flavor selector */}
+      <div style={{marginBottom:14}}>
+        <div style={{fontSize:10,color:T.dimmer,letterSpacing:'0.2em',textAlign:'center',marginBottom:8,textTransform:'uppercase'}}>
+          甘み・酸味調整 <span style={{color:T.dimmer,fontSize:9}}>(FLAVOR)</span>
         </div>
-      )}
-
-      {done && (
-        <div style={{ background:"rgba(201,169,110,0.12)", border:"1px solid rgba(201,169,110,0.4)", borderRadius:8, padding:"10px 20px", textAlign:"center", color:"#c9a96e", fontSize:13, marginBottom:14 }}>
-          ☕ 完成！お楽しみください
-        </div>
-      )}
-
-      <div style={{ display:"flex", gap:12, justifyContent:"center", marginBottom:24 }}>
-        <button onClick={() => setRunning(r => !r)} disabled={done} style={{
-          padding:"12px 32px", borderRadius:8, border: running ? "1px solid rgba(255,255,255,0.15)" : "none",
-          background: running ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg,#c9a96e,#a07840)",
-          color:"#f0e8d8", fontSize:15, letterSpacing:"0.1em", cursor: done ? "not-allowed" : "pointer",
-          opacity: done ? 0.4 : 1, fontFamily:"inherit",
-        }}>
-          {running ? "⏸ 一時停止" : "▶ スタート"}
-        </button>
-        <button onClick={reset} style={{
-          padding:"12px 20px", borderRadius:8, border:"1px solid rgba(255,255,255,0.1)",
-          background:"rgba(255,255,255,0.04)", color:"#8ca5b8", fontSize:14, cursor:"pointer", fontFamily:"inherit",
-        }}>リセット</button>
-      </div>
-
-      <div style={{ fontSize:10, color:"#4a6070", letterSpacing:"0.2em", textAlign:"center", marginBottom:10 }}>注湯ステップ</div>
-      <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-        {steps.map((step, i) => {
-          const isActive = i === curIdx, isPast = i < curIdx, isNext = i === curIdx + 1;
-          const phase = i < 2 ? "FLAVOR" : "STRENGTH";
-          return (
-            <div key={step.id} style={{
-              display:"flex", alignItems:"center", gap:8, padding:"9px 12px", borderRadius:8,
-              background: isActive ? "rgba(201,169,110,0.12)" : isNext ? "rgba(255,255,255,0.04)" : "transparent",
-              border: isActive ? "1px solid rgba(201,169,110,0.35)" : isNext ? "1px solid rgba(255,255,255,0.07)" : "1px solid transparent",
-              opacity: isPast ? 0.4 : 1, transition:"all 0.3s",
+        <div style={{display:'flex',gap:6}}>
+          {FLAVOR_OPTIONS.map(f=>(
+            <button key={f.id} onClick={()=>setFlavor(f.id)} style={{
+              flex:1,padding:'10px 6px',borderRadius:10,cursor:'pointer',fontFamily:'inherit',textAlign:'center',
+              background:flavor===f.id?T.bgCardHi:T.bgCard,
+              border:`1px solid ${flavor===f.id?T.borderGold:T.border}`,
+              transition:'all 0.15s',
             }}>
-              <div style={{ width:22, height:22, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, background: isActive ? "#c9a96e" : isPast ? "rgba(201,169,110,0.2)" : "rgba(255,255,255,0.06)", color: isActive ? "#0a0f1e" : isPast ? "#c9a96e" : "#4a6070" }}>{isPast ? "✓" : step.id}</div>
-              <div style={{ fontSize:9, padding:"2px 5px", borderRadius:3, background: phase==="FLAVOR" ? "rgba(201,169,110,0.12)" : "rgba(58,159,192,0.12)", color: phase==="FLAVOR" ? "#c9a96e" : "#3a9fc0", flexShrink:0 }}>{phase}</div>
-              <div style={{ width:34, fontSize:12, color: isActive ? "#c9a96e" : "#8ca5b8", fontVariantNumeric:"tabular-nums", flexShrink:0 }}>{step.time}</div>
-              <div style={{ width:30, fontSize:12, color: isActive ? "#e8c87a" : "#6080a0", textAlign:"right", flexShrink:0 }}>+{step.pour}g</div>
-              <div style={{ width:42, fontSize:12, color: isActive ? "#f0e8d8" : "#4a6070", textAlign:"right", flexShrink:0 }}>{step.cumulative}g</div>
-              {step.note ? <div style={{ fontSize:10, color: isActive ? "#c9a96e" : "#4a6070", lineHeight:1.4, flex:1 }}>{step.note}</div> : null}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function FourSixRef({ onSelect }) {
-  const [flavor, setFlavor] = useState("balance");
-  const [strength, setStrength] = useState("medium");
-  const [hi, setHi] = useState(null);
-
-  return (
-    <div style={{ maxWidth:640, margin:"0 auto" }}>
-      <div style={{ marginBottom:18 }}>
-        <div style={{ fontSize:10, color:"#4a6070", letterSpacing:"0.2em", marginBottom:8, textAlign:"center" }}>フレーバー（前半40%の配分）</div>
-        <div style={{ display:"flex", gap:6, justifyContent:"center" }}>
-          {FLAVOR_OPTIONS.map(f => (
-            <button key={f.id} onClick={() => setFlavor(f.id)} style={{ flex:1, maxWidth:160, padding:"9px 6px", background: flavor===f.id ? "rgba(201,169,110,0.15)" : "rgba(255,255,255,0.04)", border:`1px solid ${flavor===f.id ? "rgba(201,169,110,0.5)" : "rgba(255,255,255,0.08)"}`, borderRadius:8, cursor:"pointer", fontFamily:"inherit", textAlign:"center" }}>
-              <div style={{ fontSize:12, color: flavor===f.id ? "#c9a96e" : "#8ca5b8", fontWeight: flavor===f.id ? 600 : 400 }}>{f.label}</div>
-              <div style={{ fontSize:10, color:"#4a6070", marginTop:2 }}>{f.sub}</div>
+              <div style={{fontSize:12,color:flavor===f.id?T.gold:T.dim,fontWeight:flavor===f.id?600:400,marginBottom:2}}>{f.label}</div>
+              <div style={{fontSize:9,color:T.dimmer}}>{f.sub}</div>
             </button>
           ))}
         </div>
       </div>
-      <div style={{ marginBottom:24 }}>
-        <div style={{ fontSize:10, color:"#4a6070", letterSpacing:"0.2em", marginBottom:8, textAlign:"center" }}>ストレングス（後半60%の投数）</div>
-        <div style={{ display:"flex", gap:6, justifyContent:"center" }}>
-          {STRENGTH_OPTIONS.map(s => (
-            <button key={s.id} onClick={() => setStrength(s.id)} style={{ flex:1, maxWidth:160, padding:"9px 6px", background: strength===s.id ? "rgba(58,159,192,0.12)" : "rgba(255,255,255,0.04)", border:`1px solid ${strength===s.id ? "rgba(58,159,192,0.4)" : "rgba(255,255,255,0.08)"}`, borderRadius:8, cursor:"pointer", fontFamily:"inherit", textAlign:"center" }}>
-              <div style={{ fontSize:12, color: strength===s.id ? "#3a9fc0" : "#8ca5b8", fontWeight: strength===s.id ? 600 : 400 }}>{s.label}</div>
-              <div style={{ fontSize:10, color:"#4a6070", marginTop:2 }}>{s.sub}</div>
+
+      {/* Strength selector */}
+      <div style={{marginBottom:24}}>
+        <div style={{fontSize:10,color:T.dimmer,letterSpacing:'0.2em',textAlign:'center',marginBottom:8,textTransform:'uppercase'}}>
+          濃度調整 <span style={{color:T.dimmer,fontSize:9}}>(STRENGTH)</span>
+        </div>
+        <div style={{display:'flex',gap:6}}>
+          {STRENGTH_OPTIONS.map(s=>(
+            <button key={s.id} onClick={()=>setStrength(s.id)} style={{
+              flex:1,padding:'10px 6px',borderRadius:10,cursor:'pointer',fontFamily:'inherit',textAlign:'center',
+              background:strength===s.id?'rgba(58,159,192,0.12)':T.bgCard,
+              border:`1px solid ${strength===s.id?'rgba(58,159,192,0.4)':T.border}`,
+              transition:'all 0.15s',
+            }}>
+              <div style={{fontSize:12,color:strength===s.id?T.blue:T.dim,fontWeight:strength===s.id?600:400,marginBottom:2}}>{s.label}</div>
+              <div style={{fontSize:9,color:T.dimmer}}>{s.sub}</div>
             </button>
           ))}
         </div>
       </div>
-      <div style={{ fontSize:10, color:"#4a6070", letterSpacing:"0.2em", textAlign:"center", marginBottom:10 }}>豆量を選ぶとタイマーへ</div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(120px, 1fr))", gap:8 }}>
-        {BEAN_OPTIONS.map(beans => {
-          const recipe = calcRecipe(beans, flavor, strength);
-          const isHi = hi === beans;
+
+      {/* Bean grid */}
+      <div style={{fontSize:10,color:T.dimmer,letterSpacing:'0.2em',textAlign:'center',marginBottom:12,textTransform:'uppercase'}}>
+        豆量を選んで抽出開始
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:8}}>
+        {BEAN_OPTIONS.map(beans=>{
+          const recipe=calcRecipe(beans,flavor,strength);
+          const isHi=hi===beans;
           return (
-            <button key={beans} onClick={() => onSelect(beans, flavor, strength, recipe)} onTouchStart={() => setHi(beans)} onTouchEnd={() => setHi(null)} onMouseEnter={() => setHi(beans)} onMouseLeave={() => setHi(null)} style={{ background: isHi ? "rgba(201,169,110,0.12)" : "rgba(255,255,255,0.04)", border:`1px solid ${isHi ? "rgba(201,169,110,0.5)" : "rgba(255,255,255,0.08)"}`, borderRadius:10, padding:"10px 8px", cursor:"pointer", fontFamily:"inherit", textAlign:"center", transition:"all 0.15s" }}>
-              <div style={{ fontSize:18, fontWeight:300, color: isHi ? "#c9a96e" : "#f0e8d8", marginBottom:3 }}>{beans}g</div>
-              <div style={{ fontSize:9, color:"#4a6070", marginBottom:5 }}>→ {recipe.total}g湯</div>
-              <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-                {recipe.steps.map((step, i) => (
-                  <div key={step.id} style={{ display:"flex", justifyContent:"space-between", fontSize:9, color: i < 2 ? "#c9a96e88" : "#3a9fc088" }}>
+            <button key={beans}
+              onClick={()=>onSelect(beans,flavor,strength,recipe)}
+              onTouchStart={()=>setHi(beans)} onTouchEnd={()=>setHi(null)}
+              onMouseEnter={()=>setHi(beans)} onMouseLeave={()=>setHi(null)}
+              className="btn-press"
+              style={{
+                background:isHi?T.bgCardHi:T.bgCard,
+                border:`1px solid ${isHi?T.borderGold:T.border}`,
+                borderRadius:14,padding:'12px 10px',cursor:'pointer',fontFamily:'inherit',
+                textAlign:'center',transition:'all 0.15s',
+              }}>
+              <div style={{fontSize:22,fontWeight:200,color:isHi?T.gold:T.white,marginBottom:2}}>{beans}g</div>
+              <div style={{fontSize:10,color:T.dimmer,marginBottom:8}}>→ {recipe.total}g</div>
+              <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                {recipe.steps.map((step,i)=>(
+                  <div key={step.id} style={{
+                    display:'flex',justifyContent:'space-between',
+                    fontSize:9,color:i<2?`${T.gold}99`:`${T.blue}99`,
+                  }}>
                     <span>{step.time}</span><span>+{step.pour}g</span><span>{step.cumulative}g</span>
                   </div>
                 ))}
@@ -401,98 +584,273 @@ function FourSixRef({ onSelect }) {
   );
 }
 
-// ─── Root App ─────────────────────────────────────────────────────────────────
-function App() {
-  const [mode, setMode] = useState("home"); // home | kasuya | foursix
-  const [fourSixScreen, setFourSixScreen] = useState("ref");
-  const [selection, setSelection] = useState(null);
+function FourSixBrew({beans,flavor,strength,recipe,onBack}){
+  const {steps,total,finish}=recipe;
+  const [elapsed,setElapsed]=useState(0);
+  const [running,setRunning]=useState(false);
+  const [done,setDone]=useState(false);
+  const ref=useRef(null);
 
-  const navStyle = (active) => ({
-    flex:1, padding:"14px 8px", border:"none", cursor:"pointer", fontFamily:"inherit",
-    background: active ? "rgba(201,169,110,0.12)" : "transparent",
-    borderTop: active ? "2px solid #c9a96e" : "2px solid transparent",
-    color: active ? "#c9a96e" : "#4a6070", fontSize:11, letterSpacing:"0.15em",
-    transition:"all 0.2s",
-  });
+  useEffect(()=>{
+    if(running){
+      ref.current=setInterval(()=>{
+        setElapsed(p=>{
+          if(p>=finish){clearInterval(ref.current);setRunning(false);setDone(true);return finish;}
+          return p+1;
+        });
+      },1000);
+    } else clearInterval(ref.current);
+    return ()=>clearInterval(ref.current);
+  },[running,finish]);
 
-  const containerStyle = {
-    minHeight:"100vh", minHeight:"100dvh",
-    background:"linear-gradient(135deg, #0a0f1e 0%, #0d1a2e 50%, #0a1520 100%)",
-    display:"flex", flexDirection:"column",
-  };
-
-  const scrollArea = {
-    flex:1, overflowY:"auto", padding:"20px 16px 32px",
-    paddingTop:"max(20px, env(safe-area-inset-top))",
-    paddingBottom:"max(80px, calc(env(safe-area-inset-bottom) + 64px))",
-  };
-
-  const bottomNav = {
-    position:"fixed", bottom:0, left:0, right:0,
-    background:"rgba(10,15,30,0.95)", backdropFilter:"blur(12px)",
-    borderTop:"1px solid rgba(255,255,255,0.08)",
-    display:"flex",
-    paddingBottom:"env(safe-area-inset-bottom)",
-  };
+  const curIdx=steps.reduce((a,s,i)=>elapsed>=s.seconds?i:a,-1);
+  const nextStep=steps[curIdx+1];
+  const timeToNext=nextStep?nextStep.seconds-elapsed:null;
+  const poured=curIdx>=0?steps[curIdx].cumulative:0;
+  const reset=()=>{clearInterval(ref.current);setElapsed(0);setRunning(false);setDone(false);};
+  const urgent=timeToNext!==null&&timeToNext<=5;
+  const phaseMap=i=>i<2?'FLAVOR':'STRENGTH';
+  const flavorLabel=FLAVOR_OPTIONS.find(f=>f.id===flavor)?.label;
+  const strengthLabel=STRENGTH_OPTIONS.find(s=>s.id===strength)?.label;
+  const totalSteps=steps.length;
+  const stepLabel=curIdx>=0?`STEP ${curIdx+1} / ${totalSteps}`:'READY';
 
   return (
-    <div style={containerStyle}>
-      <div style={scrollArea}>
-        {mode === "home" && (
-          <div style={{ maxWidth:400, margin:"0 auto", textAlign:"center", paddingTop:40 }}>
-            <div style={{ fontSize:10, color:"#c9a96e", letterSpacing:"0.3em", textTransform:"uppercase", marginBottom:8 }}>Tetsu Kasuya</div>
-            <h1 style={{ fontSize:"clamp(28px,8vw,48px)", fontWeight:200, color:"#f0e8d8", letterSpacing:"0.05em", marginBottom:8 }}>☕</h1>
-            <h2 style={{ fontSize:"clamp(20px,5vw,32px)", fontWeight:300, color:"#f0e8d8", marginBottom:12 }}>Coffee Timer</h2>
-            <p style={{ fontSize:12, color:"#4a6070", lineHeight:1.8 }}>下のタブからレシピを選んでください</p>
-            <div style={{ display:"flex", gap:12, justifyContent:"center", marginTop:36 }}>
-              <button onClick={() => setMode("kasuya")} style={{ padding:"16px 24px", background:"rgba(201,169,110,0.1)", border:"1px solid rgba(201,169,110,0.3)", borderRadius:12, color:"#c9a96e", fontSize:13, cursor:"pointer", fontFamily:"inherit", lineHeight:1.6 }}>
-                10投式<br/><span style={{ fontSize:10, color:"#4a6070" }}>20g固定</span>
-              </button>
-              <button onClick={() => setMode("foursix")} style={{ padding:"16px 24px", background:"rgba(58,159,192,0.08)", border:"1px solid rgba(58,159,192,0.25)", borderRadius:12, color:"#3a9fc0", fontSize:13, cursor:"pointer", fontFamily:"inherit", lineHeight:1.6 }}>
-                4/6メソッド<br/><span style={{ fontSize:10, color:"#4a6070" }}>12〜25g</span>
-              </button>
-            </div>
+    <div style={{maxWidth:520,margin:'0 auto'}}>
+      {/* Top bar */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <div>
+          <div style={{fontSize:11,color:T.dimmer,letterSpacing:'0.15em'}}>{stepLabel}</div>
+          <div style={{display:'flex',gap:6,marginTop:3,flexWrap:'wrap'}}>
+            {[`豆${beans}g`,`湯${total}g`,flavorLabel,strengthLabel].map(t=>(
+              <span key={t} style={{
+                fontSize:9,padding:'2px 8px',borderRadius:20,
+                background:'rgba(201,169,110,0.08)',border:`1px solid ${T.goldDim}`,
+                color:T.gold,letterSpacing:'0.05em',
+              }}>{t}</span>
+            ))}
           </div>
-        )}
-
-        {mode === "kasuya" && <KasuyaTimer />}
-
-        {mode === "foursix" && (
-          <>
-            {/* 4/6 sub-header */}
-            <div style={{ textAlign:"center", marginBottom:20 }}>
-              <div style={{ fontSize:10, letterSpacing:"0.3em", color:"#c9a96e", textTransform:"uppercase", marginBottom:4 }}>Tetsu Kasuya — V60 Neo</div>
-              <h2 style={{ fontSize:"clamp(22px,6vw,36px)", fontWeight:300, color:"#f0e8d8", letterSpacing:"0.05em", marginBottom:4 }}>4/6メソッド</h2>
-              <p style={{ fontSize:11, color:"#8ca5b8" }}>Ratio 1:15 · HARIO V60 Neo · 95〜96℃</p>
-              <div style={{ display:"flex", justifyContent:"center", gap:0, marginTop:16 }}>
-                {[{id:"ref",label:"早見表"},{id:"timer",label:"タイマー"}].map(tab => (
-                  <button key={tab.id} onClick={() => tab.id==="ref" && setFourSixScreen("ref")} style={{
-                    padding:"7px 24px", background: fourSixScreen===tab.id ? "rgba(201,169,110,0.15)" : "transparent",
-                    border:"1px solid rgba(255,255,255,0.08)", color: fourSixScreen===tab.id ? "#c9a96e" : "#4a6070",
-                    fontSize:11, letterSpacing:"0.15em", cursor:"pointer", fontFamily:"inherit",
-                    borderRadius: tab.id==="ref" ? "8px 0 0 8px" : "0 8px 8px 0",
-                  }}>{tab.label}</button>
-                ))}
-              </div>
-            </div>
-            {fourSixScreen === "ref" && <FourSixRef onSelect={(b,f,s,r) => { setSelection({beans:b,flavor:f,strength:s,recipe:r}); setFourSixScreen("timer"); }} />}
-            {fourSixScreen === "timer" && selection && <FourSixTimer {...selection} onBack={() => setFourSixScreen("ref")} />}
-            {fourSixScreen === "timer" && !selection && <div style={{ textAlign:"center", color:"#4a6070", marginTop:40 }}>早見表から豆量を選んでください</div>}
-          </>
-        )}
+        </div>
+        <button onClick={onBack} style={{
+          background:'none',border:`1px solid ${T.border}`,borderRadius:8,
+          padding:'4px 12px',color:T.dimmer,fontSize:11,cursor:'pointer',fontFamily:'inherit',
+        }}>← 早見表</button>
       </div>
 
-      {/* Bottom nav */}
-      <div style={bottomNav}>
-        <button onClick={() => setMode("home")} style={navStyle(mode==="home")}>🏠<br/>ホーム</button>
-        <button onClick={() => setMode("kasuya")} style={navStyle(mode==="kasuya")}>10投式<br/>新レシピ</button>
-        <button onClick={() => setMode("foursix")} style={navStyle(mode==="foursix")}>4/6<br/>メソッド</button>
+      {/* Time bar */}
+      <TimeBar elapsed={elapsed} total={finish}/>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:T.dimmer,marginTop:3,marginBottom:14}}>
+        <span>0:00</span><span>{fmt(finish)}</span>
+      </div>
+
+      {/* Timer */}
+      <div style={{textAlign:'center',marginBottom:4}}>
+        <TimerDisplay elapsed={elapsed} color={done?T.gold:T.white}/>
+        <div style={{fontSize:11,color:T.dimmer,marginTop:4}}>目安 {fmt(finish)} 完成</div>
+      </div>
+
+      <div style={{height:1,background:T.border,margin:'16px 0'}}/>
+
+      {/* Next pour */}
+      {timeToNext!==null&&running&&!done&&(
+        <div style={{marginBottom:14}}>
+          <NextPourPanel timeToNext={timeToNext} nextStep={nextStep} urgent={urgent}/>
+        </div>
+      )}
+
+      {/* Pour progress */}
+      <div style={{marginBottom:16}}>
+        <PourProgress poured={poured} total={total}/>
+      </div>
+
+      {done&&<div style={{marginBottom:16}}><DoneBanner message="完成！お楽しみください"/></div>}
+
+      {/* Buttons */}
+      <div style={{display:'flex',gap:10,marginBottom:16}}>
+        <div style={{flex:1}}>
+          <BigButton
+            label={running?'⏸  一時停止':'▶  スタート'}
+            onClick={()=>setRunning(r=>!r)}
+            variant={running?'pause':'start'}
+            disabled={done}
+          />
+        </div>
+        <button onClick={reset} style={{
+          width:72,height:72,borderRadius:16,
+          background:T.bgCard,border:`1px solid ${T.border}`,
+          color:T.dim,fontSize:12,cursor:'pointer',fontFamily:'inherit',
+        }}>リセット</button>
+      </div>
+
+      {/* Collapsible steps */}
+      <StepList steps={steps} curIdx={curIdx} phaseMap={phaseMap}/>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// HOME SCREEN
+// ═══════════════════════════════════════════════════════════
+function HomeScreen({onNav, lastBrew}){
+  const recent = [
+    {label:'10投式', sub:'20g → 300g', ago:'前回'},
+    {label:'4/6メソッド', sub:'18g → 270g', ago:'2回前'},
+  ];
+
+  return (
+    <div style={{maxWidth:420,margin:'0 auto'}}>
+      {/* Logo area */}
+      <div style={{textAlign:'center',paddingTop:16,marginBottom:28}}>
+        {/* SVG cup with steam */}
+        <svg width="72" height="72" viewBox="0 0 72 72" style={{marginBottom:8}}>
+          {/* Steam */}
+          <line x1="28" y1="20" x2="26" y2="8" stroke={T.gold} strokeWidth="1.5" strokeLinecap="round" opacity="0.5" style={{animation:'steam 2s ease-in-out infinite'}}/>
+          <line x1="36" y1="20" x2="36" y2="7" stroke={T.gold} strokeWidth="1.5" strokeLinecap="round" opacity="0.5" style={{animation:'steam 2s ease-in-out 0.4s infinite'}}/>
+          <line x1="44" y1="20" x2="46" y2="8" stroke={T.gold} strokeWidth="1.5" strokeLinecap="round" opacity="0.5" style={{animation:'steam 2s ease-in-out 0.8s infinite'}}/>
+          {/* Cup */}
+          <path d="M18 24 L22 56 L50 56 L54 24 Z" fill="none" stroke={T.gold} strokeWidth="1.5" strokeLinejoin="round"/>
+          {/* Saucer */}
+          <ellipse cx="36" cy="57" rx="20" ry="3" fill="none" stroke={T.gold} strokeWidth="1.5"/>
+          {/* Handle */}
+          <path d="M54 32 Q64 32 64 40 Q64 48 54 48" fill="none" stroke={T.gold} strokeWidth="1.5" strokeLinecap="round"/>
+          {/* Coffee surface */}
+          <ellipse cx="36" cy="28" rx="15" ry="3" fill={`${T.gold}22`} stroke={`${T.gold}66`} strokeWidth="1"/>
+        </svg>
+        <div style={{fontSize:10,color:T.gold,letterSpacing:'0.35em',textTransform:'uppercase',marginBottom:6}}>Tetsu Kasuya</div>
+        <h1 style={{fontSize:'clamp(26px,7vw,40px)',fontWeight:200,color:T.white,letterSpacing:'0.04em'}}>Coffee Timer</h1>
+        <p style={{fontSize:11,color:T.dimmer,marginTop:6,letterSpacing:'0.05em'}}>HARIO V60 NEO · 粕谷 哲</p>
+      </div>
+
+      {/* Recipe cards */}
+      <div style={{display:'flex',flexDirection:'column',gap:12,marginBottom:24}}>
+        <button onClick={()=>onNav('kasuya')} className="btn-press" style={{
+          background:'linear-gradient(135deg,rgba(201,169,110,0.10),rgba(201,169,110,0.03))',
+          border:`1px solid ${T.borderGold}`,borderRadius:18,
+          padding:'20px 20px',cursor:'pointer',fontFamily:'inherit',textAlign:'left',
+          transition:'all 0.2s',
+        }}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+            <div>
+              <div style={{fontSize:10,color:T.gold,letterSpacing:'0.2em',marginBottom:6,textTransform:'uppercase'}}>新レシピ</div>
+              <div style={{fontSize:22,fontWeight:200,color:T.white,marginBottom:4}}>10投式</div>
+              <div style={{fontSize:11,color:T.dim}}>豆20g固定 · 300g · 10ステップ</div>
+            </div>
+            <div style={{
+              width:44,height:44,borderRadius:12,
+              background:'rgba(201,169,110,0.12)',
+              display:'flex',alignItems:'center',justifyContent:'center',
+              fontSize:22,
+            }}>☕</div>
+          </div>
+          <div style={{marginTop:14,height:2,background:`rgba(201,169,110,0.15)`,borderRadius:1}}>
+            <div style={{height:'100%',width:'100%',background:`linear-gradient(90deg,${T.gold},${T.goldHi})`,borderRadius:1,opacity:0.4}}/>
+          </div>
+        </button>
+
+        <button onClick={()=>onNav('foursix')} className="btn-press" style={{
+          background:'linear-gradient(135deg,rgba(58,159,192,0.08),rgba(58,159,192,0.02))',
+          border:'1px solid rgba(58,159,192,0.30)',borderRadius:18,
+          padding:'20px 20px',cursor:'pointer',fontFamily:'inherit',textAlign:'left',
+          transition:'all 0.2s',
+        }}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+            <div>
+              <div style={{fontSize:10,color:T.blue,letterSpacing:'0.2em',marginBottom:6,textTransform:'uppercase'}}>定番</div>
+              <div style={{fontSize:22,fontWeight:200,color:T.white,marginBottom:4}}>4/6メソッド</div>
+              <div style={{fontSize:11,color:T.dim}}>12〜48g対応 · 7種の豆量</div>
+            </div>
+            <div style={{
+              width:44,height:44,borderRadius:12,
+              background:'rgba(58,159,192,0.10)',
+              display:'flex',alignItems:'center',justifyContent:'center',
+              fontSize:22,
+            }}>⚗️</div>
+          </div>
+          <div style={{marginTop:14,height:2,background:'rgba(58,159,192,0.15)',borderRadius:1}}>
+            <div style={{height:'100%',width:'100%',background:`linear-gradient(90deg,${T.blue},#5ab8d8)`,borderRadius:1,opacity:0.4}}/>
+          </div>
+        </button>
+      </div>
+
+      {/* Recent */}
+      <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:16,padding:'14px 16px'}}>
+        <div style={{fontSize:10,color:T.dimmer,letterSpacing:'0.2em',textTransform:'uppercase',marginBottom:12}}>最近使用したレシピ</div>
+        {recent.map((r,i)=>(
+          <div key={i} style={{
+            display:'flex',justifyContent:'space-between',alignItems:'center',
+            padding:'8px 0',borderBottom:i<recent.length-1?`1px solid ${T.border}`:'none',
+          }}>
+            <div>
+              <div style={{fontSize:13,color:T.dim}}>{r.label}</div>
+              <div style={{fontSize:10,color:T.dimmer,marginTop:2}}>{r.sub}</div>
+            </div>
+            <div style={{fontSize:10,color:T.dimmer}}>{r.ago}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{textAlign:'center',marginTop:20,fontSize:10,color:T.dimmer,letterSpacing:'0.1em',lineHeight:2}}>
+        HARIO V60 NEO · Ratio 1:15 · 95〜96℃
       </div>
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// ═══════════════════════════════════════════════════════════
+// ROOT APP
+// ═══════════════════════════════════════════════════════════
+function App(){
+  const [mode,setMode]=useState('home');
+
+  const navItem=(id,icon,label)=>{
+    const active=mode===id;
+    return (
+      <button onClick={()=>setMode(id)} style={{
+        flex:1,padding:'10px 4px',border:'none',cursor:'pointer',fontFamily:'inherit',
+        background:active?'rgba(201,169,110,0.08)':'transparent',
+        borderTop:`2px solid ${active?T.gold:'transparent'}`,
+        transition:'all 0.2s',display:'flex',flexDirection:'column',alignItems:'center',gap:2,
+      }}>
+        <span style={{fontSize:18}}>{icon}</span>
+        <span style={{fontSize:9,letterSpacing:'0.1em',color:active?T.gold:T.dimmer,textTransform:'uppercase'}}>{label}</span>
+      </button>
+    );
+  };
+
+  return (
+    <div style={{
+      minHeight:'100vh',minHeight:'100dvh',
+      background:`linear-gradient(160deg,#080d1a 0%,#0d1a2e 60%,#080d1a 100%)`,
+      display:'flex',flexDirection:'column',
+    }}>
+      <div style={{
+        flex:1,overflowY:'auto',
+        paddingTop:'max(20px,env(safe-area-inset-top))',
+        paddingLeft:16,paddingRight:16,
+        paddingBottom:'max(90px,calc(env(safe-area-inset-bottom)+74px))',
+      }}>
+        {mode==='home'&&<HomeScreen onNav={setMode}/>}
+        {mode==='kasuya'&&<KasuyaScreen/>}
+        {mode==='foursix'&&<FourSixScreen/>}
+      </div>
+
+      {/* Bottom Nav */}
+      <div style={{
+        position:'fixed',bottom:0,left:0,right:0,
+        background:'rgba(8,13,26,0.96)',backdropFilter:'blur(16px)',
+        borderTop:`1px solid ${T.border}`,
+        display:'flex',
+        paddingBottom:'env(safe-area-inset-bottom)',
+      }}>
+        {navItem('home','🏠','Home')}
+        {navItem('kasuya','☕','10投式')}
+        {navItem('foursix','⚗️','4 / 6')}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </script>
 </body>
 </html>
