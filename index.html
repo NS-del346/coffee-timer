@@ -164,21 +164,23 @@ const KASUYA_FINISH = 210;
 
 const BEAN_OPTIONS = [12,18,24,30,36,48];
 const FLAVOR_OPT = [
-  {id:'bright', label:'酸味・明るい', en:'BRIGHT',  sub:'1st少なめ'},
+  {id:'bright', label:'明るい・酸味', en:'BRIGHT',  sub:'1st多め'},
   {id:'balance',label:'バランス',     en:'BALANCE', sub:'均等'},
-  {id:'sweet',  label:'甘み・クリア', en:'SWEET',   sub:'1st多め'},
+  {id:'sweet',  label:'甘み',         en:'SWEET',   sub:'1st少なめ'},
 ];
 const STRENGTH_OPT = [
-  {id:'strong',label:'濃い', en:'STRONG',sub:'2投'},
-  {id:'medium',label:'普通', en:'MEDIUM',sub:'3投'},
-  {id:'light', label:'薄い', en:'LIGHT', sub:'4投'},
+  {id:'light', label:'薄い',    en:'LIGHT', sub:'1投'},
+  {id:'medium',label:'濃い',    en:'MEDIUM',sub:'2投'},
+  {id:'strong',label:'より濃い',en:'STRONG',sub:'3投'},
 ];
 
 function calcRecipe(beans,flavor,strength){
   const total=beans*15,f40=Math.round(total*.4),s60=Math.round(total*.6);
-  const r=flavor==='sweet'?.6:flavor==='bright'?.4:.5;
+  // Flavor: bright = 1st MORE than 2nd, sweet = 1st LESS than 2nd
+  const r=flavor==='bright'?.6:flavor==='sweet'?.4:.5;
   const p1=Math.round(f40*r),p2=f40-p1;
-  const n=strength==='strong'?2:strength==='light'?4:3;
+  // Strength: light=1投, medium=2投, strong=3投
+  const n=strength==='light'?1:strength==='medium'?2:3;
   const pp=Math.round(s60/n);
   const steps=[
     {id:1,time:'0:00',seconds:0, pour:p1,cumulative:p1,   phase:'FLAVOR',note:'甘み・酸味調整 前半'},
@@ -606,7 +608,7 @@ function FourSixRef({onSelect}){
       {/* Strength */}
       <div style={{marginBottom:SP.lg}}>
         <div style={{fontSize:10,color:C.dimmer,letterSpacing:'.2em',textAlign:'center',marginBottom:SP.xs,textTransform:'uppercase'}}>
-          濃度調整 <span style={{opacity:.6}}>(STRENGTH)</span>
+          濃度調整 <span style={{opacity:.6}}>(STRENGTH) 投数が多いほど濃くなる</span>
         </div>
         <div style={{display:'flex',gap:6}}>
           {STRENGTH_OPT.map(s=>{
