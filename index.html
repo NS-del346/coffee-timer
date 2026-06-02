@@ -432,11 +432,8 @@ function KasuyaScreen(){
   if(!brewMode){
     return (
       <div style={{padding:`${SP.md}px ${SP.md}px 0`,maxWidth:560,margin:'0 auto'}}>
-        <div style={{
-          background:`linear-gradient(150deg,${C.goldBg},rgba(8,13,26,0))`,
-          border:`1px solid ${C.goldDim}`,borderRadius:20,
-          padding:'24px 20px',marginBottom:SP.md,textAlign:'center',
-        }}>
+        {/* Hero — no card, matches 4/6 style */}
+        <div style={{textAlign:'center',marginBottom:SP.md}}>
           <div style={{fontSize:10,color:C.gold,letterSpacing:'.3em',textTransform:'uppercase',marginBottom:6}}>
             Barista Tetsu Kasuya · World Champion
           </div>
@@ -576,9 +573,9 @@ function FourSixRef({onSelect}){
     <div style={{padding:`${SP.md}px ${SP.md}px 0`,maxWidth:600,margin:'0 auto'}}>
       {/* Header */}
       <div style={{textAlign:'center',marginBottom:SP.md}}>
-        <div style={{fontSize:10,color:C.gold,letterSpacing:'.3em',textTransform:'uppercase',marginBottom:4}}>Tetsu Kasuya · V60 Neo</div>
-        <h2 style={{fontSize:'clamp(22px,6vw,36px)',fontWeight:200,color:C.white,letterSpacing:'.03em'}}>4/6メソッド</h2>
-        <p style={{fontSize:11,color:C.dim,marginTop:4}}>Ratio 1:15 · 95〜96℃</p>
+        <div style={{fontSize:10,color:C.gold,letterSpacing:'.3em',textTransform:'uppercase',marginBottom:6}}>Tetsu Kasuya · V60 Neo</div>
+        <h2 style={{fontSize:'clamp(24px,7vw,40px)',fontWeight:200,color:C.white,letterSpacing:'.03em',marginBottom:4}}>4/6メソッド</h2>
+        <p style={{fontSize:12,color:C.dim,lineHeight:1.8}}>Ratio 1:15 · 95〜96℃</p>
       </div>
 
       {/* Flavor */}
